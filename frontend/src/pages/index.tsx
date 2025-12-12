@@ -1288,7 +1288,7 @@ export default function Home() {
             </a>
             <span>·</span>
             <a
-              href="https://github.com/nicola/ika-ephemeral-backend-dkg"
+              href="https://github.com/iamknownasfesal/ika-ephemeral-backend-dkg"
               target="_blank"
               rel="noopener noreferrer"
               className="link"
