@@ -1,13 +1,7 @@
 import pino from "pino";
 
+// pino-pretty transport uses Node.js worker threads which Bun doesn't support
+// Use basic pino - Railway captures JSON logs properly
 export const logger = pino({
-  transport: {
-    target: "pino-pretty",
-    options: {
-      colorize: true,
-      translateTime: "SYS:standard",
-      ignore: "pid,hostname",
-    },
-  },
-  level: "debug",
+  level: process.env.LOG_LEVEL || "debug",
 });
