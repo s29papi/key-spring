@@ -1,4 +1,4 @@
-# Ika Cross-Chain Wallet Demo
+# KeySpring Demo (Ika Cross-Chain Wallet Demo)
 
 Create an Ethereum wallet from any browser wallet and send ETH on Base Sepolia — all non-custodially using Ika's distributed key generation.
 
