@@ -37,6 +37,31 @@ import type {
 } from "./types.js";
 import { computeAddress } from "ethers";
 
+// Timeout helper to prevent indefinite waits
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  operation: string
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)),
+        timeoutMs
+      )
+    ),
+  ]);
+}
+
+// Operation timeouts (in milliseconds)
+const TIMEOUTS = {
+  TRANSACTION_WAIT: 60_000, // 60 seconds for transaction confirmation
+  SIGN_WAIT: 120_000, // 2 minutes for signature from network
+  PRESIGN_WAIT: 120_000, // 2 minutes for presign completion
+  ETH_RECEIPT_WAIT: 60_000, // 60 seconds for ETH transaction receipt
+} as const;
+
 // In-memory store for DKG requests
 const dkgRequests = new Map<string, DKGRequest>();
 // In-memory store for presign requests
@@ -545,13 +570,17 @@ export class DKGExecutorService {
 
     logger.debug({ digest: result.digest }, "Transaction executed");
 
-    // Wait for transaction and parse events
-    const txResult = await this.client.waitForTransaction({
-      digest: result.digest,
-      options: {
-        showEvents: true,
-      },
-    });
+    // Wait for transaction and parse events (with timeout)
+    const txResult = await withTimeout(
+      this.client.waitForTransaction({
+        digest: result.digest,
+        options: {
+          showEvents: true,
+        },
+      }),
+      TIMEOUTS.TRANSACTION_WAIT,
+      "DKG transaction confirmation"
+    );
 
     // Find the created DWalletCap and dWallet objects from events
     let dWalletCapObjectId: string | null = null;
@@ -650,11 +679,15 @@ export class DKGExecutorService {
 
     const result = await this.executor.executeTransaction(tx);
 
-    // Parse presign ID from events
-    const txResult = await this.client.waitForTransaction({
-      digest: result.digest,
-      options: { showEvents: true },
-    });
+    // Parse presign ID from events (with timeout)
+    const txResult = await withTimeout(
+      this.client.waitForTransaction({
+        digest: result.digest,
+        options: { showEvents: true },
+      }),
+      TIMEOUTS.TRANSACTION_WAIT,
+      "Presign transaction confirmation"
+    );
 
     let presignId: string | null = null;
     for (const event of txResult.events || []) {
@@ -694,10 +727,11 @@ export class DKGExecutorService {
     ethTxHash?: string;
     ethBlockNumber?: number;
   }> {
-    // Verify presign exists
-    const presign = await this.ikaClient.getPresignInParticularState(
-      data.presignId,
-      "Completed"
+    // Verify presign exists (with timeout to prevent indefinite wait)
+    const presign = await withTimeout(
+      this.ikaClient.getPresignInParticularState(data.presignId, "Completed"),
+      TIMEOUTS.PRESIGN_WAIT,
+      "Presign state check"
     );
 
     if (!presign) {
@@ -766,10 +800,15 @@ export class DKGExecutorService {
 
     const result = await this.executor.executeTransaction(tx);
 
-    const txResult = await this.client.waitForTransaction({
-      digest: result.digest,
-      options: { showEvents: true },
-    });
+    // Wait for sign transaction confirmation (with timeout)
+    const txResult = await withTimeout(
+      this.client.waitForTransaction({
+        digest: result.digest,
+        options: { showEvents: true },
+      }),
+      TIMEOUTS.TRANSACTION_WAIT,
+      "Sign transaction confirmation"
+    );
 
     let signId: string | null = null;
     for (const event of txResult.events || []) {
@@ -789,12 +828,16 @@ export class DKGExecutorService {
       throw new Error("Failed to get sign ID from transaction");
     }
 
-    // Wait for network to complete the signature
-    const signResult = await this.ikaClient.getSignInParticularState(
-      signId,
-      Curve.SECP256K1,
-      SignatureAlgorithm.ECDSASecp256k1,
-      "Completed"
+    // Wait for network to complete the signature (with timeout to prevent indefinite wait)
+    const signResult = await withTimeout(
+      this.ikaClient.getSignInParticularState(
+        signId,
+        Curve.SECP256K1,
+        SignatureAlgorithm.ECDSASecp256k1,
+        "Completed"
+      ),
+      TIMEOUTS.SIGN_WAIT,
+      "Signature from Ika network"
     );
 
     const signatureBytes = signResult.state.Completed.signature;
@@ -919,11 +962,15 @@ export class DKGExecutorService {
       serializedTransaction: signedTx,
     });
 
-    // Wait for transaction receipt
-    const receipt = await ethClient.waitForTransactionReceipt({
-      hash: txHash,
-      confirmations: 1,
-    });
+    // Wait for transaction receipt (with timeout)
+    const receipt = await withTimeout(
+      ethClient.waitForTransactionReceipt({
+        hash: txHash,
+        confirmations: 1,
+      }),
+      TIMEOUTS.ETH_RECEIPT_WAIT,
+      "Ethereum transaction receipt"
+    );
 
     return {
       txHash,

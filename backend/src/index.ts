@@ -332,12 +332,17 @@ function createApp() {
 
 // Graceful shutdown
 let keepaliveInterval: NodeJS.Timeout | null = null;
+let selfPingInterval: NodeJS.Timeout | null = null;
 
 async function gracefulShutdown(signal: string) {
   logger.info({ signal }, "Starting graceful shutdown");
   if (keepaliveInterval) {
     clearInterval(keepaliveInterval);
     keepaliveInterval = null;
+  }
+  if (selfPingInterval) {
+    clearInterval(selfPingInterval);
+    selfPingInterval = null;
   }
   dkgExecutor.stop();
   process.exit(0);
@@ -388,8 +393,7 @@ async function start() {
     "Server is running"
   );
 
-  // Keepalive interval - prevents Railway from killing "idle" services
-  // Logs heartbeat every 5 minutes to show the service is alive
+  // Keepalive interval - logs heartbeat every 5 minutes
   keepaliveInterval = setInterval(() => {
     const memUsage = process.memoryUsage();
     logger.info(
@@ -402,6 +406,24 @@ async function start() {
       "Service heartbeat"
     );
   }, 5 * 60 * 1000); // Every 5 minutes
+
+  // Self-ping interval - keeps the HTTP server active by making internal requests
+  // This prevents Bun's HTTP server from going into an idle state on Railway
+  selfPingInterval = setInterval(async () => {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${config.server.port}/health`
+      );
+      if (!response.ok) {
+        logger.warn(
+          { status: response.status },
+          "Self-ping health check returned non-OK status"
+        );
+      }
+    } catch (error) {
+      logger.error({ error }, "Self-ping health check failed");
+    }
+  }, 60 * 1000); // Every 1 minute
 
   // Shutdown handlers
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
