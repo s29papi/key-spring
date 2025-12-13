@@ -202,7 +202,14 @@ export class DKGExecutorService {
 
     this.isRunning = true;
     logger.info("Starting DKG Executor...");
-    this.poll();
+
+    // Start polling with error recovery
+    this.poll().catch((err) => {
+      logger.error({ err }, "Error starting poll loop - will retry");
+      if (this.isRunning) {
+        this.pollTimeout = setTimeout(() => this.poll(), 5000);
+      }
+    });
   }
 
   /**
@@ -219,21 +226,47 @@ export class DKGExecutorService {
 
   /**
    * Poll for pending requests
+   * Uses setInterval pattern for more reliable scheduling on Railway
    */
   private async poll(): Promise<void> {
     if (!this.isRunning) return;
 
     try {
       await this.processPendingRequests();
-      await this.processPendingPresigns();
-      await this.processPendingSigns();
-      this.cleanupOldRequests();
     } catch (error) {
-      logger.error({ error }, "Error in DKG poll");
+      logger.error({ error }, "Error processing DKG requests");
     }
 
-    // Schedule next poll (2 seconds)
-    this.pollTimeout = setTimeout(() => this.poll(), 2000);
+    try {
+      await this.processPendingPresigns();
+    } catch (error) {
+      logger.error({ error }, "Error processing presigns");
+    }
+
+    try {
+      await this.processPendingSigns();
+    } catch (error) {
+      logger.error({ error }, "Error processing signs");
+    }
+
+    try {
+      this.cleanupOldRequests();
+    } catch (error) {
+      logger.error({ error }, "Error cleaning up old requests");
+    }
+
+    // Schedule next poll (2 seconds) - always schedule even if errors occurred
+    if (this.isRunning) {
+      this.pollTimeout = setTimeout(() => {
+        this.poll().catch((err) => {
+          logger.error({ err }, "Fatal error in poll loop - restarting");
+          // Force restart the poll loop after a delay
+          if (this.isRunning) {
+            this.pollTimeout = setTimeout(() => this.poll(), 5000);
+          }
+        });
+      }, 2000);
+    }
   }
 
   /**

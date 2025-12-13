@@ -331,8 +331,14 @@ function createApp() {
 }
 
 // Graceful shutdown
+let keepaliveInterval: NodeJS.Timeout | null = null;
+
 async function gracefulShutdown(signal: string) {
   logger.info({ signal }, "Starting graceful shutdown");
+  if (keepaliveInterval) {
+    clearInterval(keepaliveInterval);
+    keepaliveInterval = null;
+  }
   dkgExecutor.stop();
   process.exit(0);
 }
@@ -343,12 +349,17 @@ async function start() {
   process.on("uncaughtException", (error) => {
     logger.error(
       { error: error.message, stack: error.stack },
-      "Uncaught exception"
+      "Uncaught exception - process continuing"
     );
+    // Don't exit - keep the process running
   });
 
   process.on("unhandledRejection", (reason) => {
-    logger.error({ reason }, "Unhandled promise rejection");
+    logger.error(
+      { reason },
+      "Unhandled promise rejection - process continuing"
+    );
+    // Don't exit - keep the process running
   });
 
   logger.info(
@@ -376,6 +387,21 @@ async function start() {
     },
     "Server is running"
   );
+
+  // Keepalive interval - prevents Railway from killing "idle" services
+  // Logs heartbeat every 5 minutes to show the service is alive
+  keepaliveInterval = setInterval(() => {
+    const memUsage = process.memoryUsage();
+    logger.info(
+      {
+        uptime: Math.floor(process.uptime()),
+        heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+        heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+        rssMB: Math.round(memUsage.rss / 1024 / 1024),
+      },
+      "Service heartbeat"
+    );
+  }, 5 * 60 * 1000); // Every 5 minutes
 
   // Shutdown handlers
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
